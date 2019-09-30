@@ -1,0 +1,13 @@
+{
+  "name": "io.realcast.fork.mirror",
+  "version": "4.0.0",
+  "displayName": "Mirror Realcast Fork",
+  "description": "Realcast Fork of Vis2k Mirror",
+  "unity": "2019.2",
+  "unityRelease": "6f1",
+  "author": {
+    "name": "Realcast",
+    "email": "contact@realcast.io",
+    "url": "https://www.realcast.io"
+  } 
+}
