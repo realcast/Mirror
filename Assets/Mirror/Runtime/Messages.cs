@@ -158,16 +158,25 @@ namespace Mirror
 
     public struct AddPlayerMessage : IMessageBase
     {
-        [Obsolete("Create your own message instead, see Guides / Customizable players")]
+        /// <summary>
+        /// Obsolete: Create your own message instead. See <a href="../Guides/GameObjects/SpawnPlayerCustom.md">Custom Players</a>
+        /// </summary>
+        [Obsolete("Create your own message instead. See https://mirror-networking.com/docs/Guides/GameObjects/SpawnPlayerCustom.html")]
         public byte[] value;
 
-        [Obsolete("Create your own message instead, see Guides / Customizable players")]
+        /// <summary>
+        /// Obsolete: Create your own message instead. See <a href="../Guides/GameObjects/SpawnPlayerCustom.md">Custom Players</a>
+        /// </summary>
+        [Obsolete("Create your own message instead. See https://mirror-networking.com/docs/Guides/GameObjects/SpawnPlayerCustom.html")]
         public void Deserialize(NetworkReader reader)
         {
             value = reader.ReadBytesAndSize();
         }
 
-        [Obsolete("Create your own message instead, see Guides / Customizable players")]
+        /// <summary>
+        /// Obsolete: Create your own message instead. See <a href="../Guides/Guides/GameObjects/SpawnPlayerCustom.md">Custom Players</a>
+        /// </summary>
+        [Obsolete("Create your own message instead. See https://mirror-networking.com/docs/Guides/GameObjects/SpawnPlayerCustom.html")]
         public void Serialize(NetworkWriter writer)
         {
             writer.WriteBytesAndSize(value);
