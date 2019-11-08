@@ -312,10 +312,12 @@ namespace Mirror
     #endregion
 
     #region Internal System Messages
-    public struct SpawnPrefabMessage : IMessageBase
+    public struct SpawnMessage : IMessageBase
     {
         public uint netId;
-        public bool owner;
+        public bool isLocalPlayer;
+        public bool isOwner;
+        public ulong sceneId;
         public Guid assetId;
         public Vector3 position;
         public Quaternion rotation;
@@ -327,8 +329,13 @@ namespace Mirror
         public void Deserialize(NetworkReader reader)
         {
             netId = reader.ReadPackedUInt32();
-            owner = reader.ReadBoolean();
-            assetId = reader.ReadGuid();
+            isLocalPlayer = reader.ReadBoolean();
+            isOwner = reader.ReadBoolean();
+            sceneId = reader.ReadPackedUInt64();
+            if (sceneId == 0)
+            {
+                assetId = reader.ReadGuid();
+            }
             position = reader.ReadVector3();
             rotation = reader.ReadQuaternion();
             scale = reader.ReadVector3();
@@ -338,43 +345,13 @@ namespace Mirror
         public void Serialize(NetworkWriter writer)
         {
             writer.WritePackedUInt32(netId);
-            writer.WriteBoolean(owner);
-            writer.WriteGuid(assetId);
-            writer.WriteVector3(position);
-            writer.WriteQuaternion(rotation);
-            writer.WriteVector3(scale);
-            writer.WriteBytesAndSizeSegment(payload);
-        }
-    }
-
-    public struct SpawnSceneObjectMessage : IMessageBase
-    {
-        public uint netId;
-        public bool owner;
-        public ulong sceneId;
-        public Vector3 position;
-        public Quaternion rotation;
-        public Vector3 scale;
-        // the serialized component data
-        // -> ArraySegment to avoid unnecessary allocations
-        public ArraySegment<byte> payload;
-
-        public void Deserialize(NetworkReader reader)
-        {
-            netId = reader.ReadPackedUInt32();
-            owner = reader.ReadBoolean();
-            sceneId = reader.ReadUInt64();
-            position = reader.ReadVector3();
-            rotation = reader.ReadQuaternion();
-            scale = reader.ReadVector3();
-            payload = reader.ReadBytesAndSizeSegment();
-        }
-
-        public void Serialize(NetworkWriter writer)
-        {
-            writer.WritePackedUInt32(netId);
-            writer.WriteBoolean(owner);
-            writer.WriteUInt64(sceneId);
+            writer.WriteBoolean(isLocalPlayer);
+            writer.WriteBoolean(isOwner);
+            writer.WritePackedUInt64(sceneId);
+            if (sceneId == 0)
+            {
+                writer.WriteGuid(assetId);
+            }
             writer.WriteVector3(position);
             writer.WriteQuaternion(rotation);
             writer.WriteVector3(scale);
@@ -423,24 +400,6 @@ namespace Mirror
         public void Serialize(NetworkWriter writer)
         {
             writer.WritePackedUInt32(netId);
-        }
-    }
-
-    public struct ClientAuthorityMessage : IMessageBase
-    {
-        public uint netId;
-        public bool authority;
-
-        public void Deserialize(NetworkReader reader)
-        {
-            netId = reader.ReadPackedUInt32();
-            authority = reader.ReadBoolean();
-        }
-
-        public void Serialize(NetworkWriter writer)
-        {
-            writer.WritePackedUInt32(netId);
-            writer.WriteBoolean(authority);
         }
     }
 
