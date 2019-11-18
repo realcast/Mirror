@@ -75,13 +75,13 @@ namespace Mirror
         /// </summary>
         public bool isLocalPlayer => ClientScene.localPlayer == this;
 
+        bool isOwner;
+
         /// <summary>
         /// This returns true if this object is the authoritative player object on the client.
         /// <para>This value is determined at runtime. For most objects, authority is held by the server.</para>
         /// <para>For objects that had their authority set by AssignClientAuthority on the server, this will be true on the client that owns the object. NOT on other clients.</para>
         /// </summary>
-        bool isOwner;
-
         public bool hasAuthority
         {
             get => isOwner;
@@ -137,12 +137,12 @@ namespace Mirror
         public NetworkConnectionToClient clientAuthorityOwner => connectionToClient;
 
         /// <summary>
-        /// The NetworkConnection associated with this NetworkIdentity. This is only valid for player objects on a local client.
+        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this NetworkIdentity. This is only valid for player and other owned objects on the client.
         /// </summary>
         public NetworkConnection connectionToServer { get; internal set; }
 
         /// <summary>
-        /// The NetworkConnection associated with this <see cref="NetworkIdentity">NetworkIdentity.</see> This is valid for player and other owned objects in the server.
+        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this NetworkIdentity. This is valid for player and other owned objects in the server.
         /// <para>Use it to return details such as the connection&apos;s identity, IP address and ready status.</para>
         /// </summary>
         public NetworkConnectionToClient connectionToClient { get; internal set; }

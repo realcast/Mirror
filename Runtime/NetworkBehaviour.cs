@@ -18,8 +18,9 @@ namespace Mirror
     /// <para>The NetworkBehaviour component requires a NetworkIdentity on the game object. There can be multiple NetworkBehaviours on a single game object. For an object with sub-components in a hierarchy, the NetworkIdentity must be on the root object, and NetworkBehaviour scripts must also be on the root object.</para>
     /// <para>Some of the built-in components of the networking system are derived from NetworkBehaviour, including NetworkTransport, NetworkAnimator and NetworkProximityChecker.</para>
     /// </remarks>
-    [RequireComponent(typeof(NetworkIdentity))]
     [AddComponentMenu("")]
+    [RequireComponent(typeof(NetworkIdentity))]
+    [HelpURL("https://mirror-networking.com/docs/Guides/NetworkBehaviour.html")]
     public class NetworkBehaviour : MonoBehaviour
     {
         internal float lastSyncTime;
@@ -64,8 +65,9 @@ namespace Mirror
         public bool isClientOnly => isClient && !isServer;
 
         /// <summary>
-        /// This returns true if this object is the authoritative version of the object in the distributed network application.
-        /// <para>The <see cref="NetworkIdentity.hasAuthority">NetworkIdentity.hasAuthority</see> value on the NetworkIdentity determines how authority is determined. For most objects, authority is held by the server. For objects with <see cref="NetworkIdentity.hasAuthority">NetworkIdentity.hasAuthority</see> set, authority is held by the client of that player.</para>
+        /// This returns true if this object is the authoritative player object on the client.
+        /// <para>This value is determined at runtime. For most objects, authority is held by the server.</para>
+        /// <para>For objects that had their authority set by AssignClientAuthority on the server, this will be true on the client that owns the object. NOT on other clients.</para>
         /// </summary>
         public bool hasAuthority => netIdentity.hasAuthority;
 
@@ -76,12 +78,13 @@ namespace Mirror
         public uint netId => netIdentity.netId;
 
         /// <summary>
-        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this <see cref="NetworkIdentity">NetworkIdentity.</see> This is only valid for player objects on the server.
+        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this <see cref="NetworkIdentity">NetworkIdentity</see>. This is only valid for player and other owned objects on the client.
         /// </summary>
         public NetworkConnection connectionToServer => netIdentity.connectionToServer;
 
         /// <summary>
-        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this <see cref="NetworkIdentity">NetworkIdentity.</see> This is only valid for player objects on the server.
+        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this <see cref="NetworkIdentity">NetworkIdentity</see>. This is valid for player and other owned objects on the server.
+        /// <para>Use it to return details such as the connection&apos;s identity, IP address and ready status.</para>
         /// </summary>
         public NetworkConnection connectionToClient => netIdentity.connectionToClient;
 
@@ -193,7 +196,7 @@ namespace Mirror
             // local players can always send commands, regardless of authority, other objects must have authority.
             if (!(isLocalPlayer || hasAuthority))
             {
-                Debug.LogWarning("Trying to send command for object without authority.");
+                Debug.LogWarning($"Trying to send command for object without authority. {invokeClass.ToString()}.{cmdName}");
                 return;
             }
 
