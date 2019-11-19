@@ -205,12 +205,9 @@ namespace Mirror
             localClientActive = true;
             foreach (NetworkIdentity identity in NetworkIdentity.spawned.Values)
             {
-                if (!identity.isClient)
-                {
-                    if (LogFilter.Debug) Debug.Log("ActivateClientScene " + identity.netId + " " + identity);
+                if (LogFilter.Debug) Debug.Log("ActivateClientScene " + identity.netId + " " + identity);
 
-                    identity.OnStartClient();
-                }
+                identity.OnStartClient();
             }
         }
 
@@ -822,6 +819,10 @@ namespace Mirror
             // Set the connection on the NetworkIdentity on the server, NetworkIdentity.SetLocalPlayer is not called on the server (it is on clients)
             identity.connectionToClient = (NetworkConnectionToClient)conn;
 
+            // special case to ensure that isLocalPlayer is true before calling OnStartServer
+            if (NetworkClient.active)
+                ClientScene.localPlayer = identity;
+
             // set ready if not set yet
             SetClientReady(conn);
 
@@ -858,6 +859,10 @@ namespace Mirror
 
             // Set the connection on the NetworkIdentity on the server, NetworkIdentity.SetLocalPlayer is not called on the server (it is on clients)
             identity.connectionToClient = (Mirror.NetworkConnectionToClient)conn;
+
+            // special case to ensure that isLocalPlayer is true before calling OnStartServer
+            if (NetworkClient.active)
+                ClientScene.localPlayer = identity;
 
             //NOTE: DONT set connection ready.
 
@@ -1006,7 +1011,12 @@ namespace Mirror
             identity.Reset();
             identity.connectionToClient = (NetworkConnectionToClient)ownerConnection;
 
-            identity.OnStartServer(false);
+            // special case to make sure hasAuthority is set
+            // on start server in host mode
+            if (ownerConnection is ULocalConnectionToClient)
+                identity.hasAuthority = true;
+            
+            identity.OnStartServer();
 
             if (LogFilter.Debug) Debug.Log("SpawnObject instance ID " + identity.netId + " asset ID " + identity.assetId);
 

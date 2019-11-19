@@ -23,7 +23,7 @@ namespace Mirror
         /// <summary>
         /// NetworkIdentity of the localPlayer
         /// </summary>
-        public static NetworkIdentity localPlayer { get; private set; }
+        public static NetworkIdentity localPlayer { get; internal set; }
 
         /// <summary>
         /// Returns true when a client's connection has been set to ready.
@@ -475,15 +475,15 @@ namespace Mirror
 
             identity.netId = msg.netId;
             NetworkIdentity.spawned[msg.netId] = identity;
-            identity.pendingAuthority = msg.isOwner;
+            identity.hasAuthority = msg.isOwner;
 
             // objects spawned as part of initial state are started on a second pass
             if (isSpawnFinished)
             {
+                identity.NotifyAuthority();
                 identity.OnStartClient();
                 if (msg.isLocalPlayer)
                     OnSpawnMessageForLocalPlayer(identity);
-                identity.hasAuthority = identity.pendingAuthority;
             }
         }
 
@@ -581,11 +581,8 @@ namespace Mirror
             // use data from scene objects
             foreach (NetworkIdentity identity in NetworkIdentity.spawned.Values.OrderBy(uv => uv.netId))
             {
-                identity.hasAuthority = identity.pendingAuthority;
-                if (!identity.isClient)
-                {
-                    identity.OnStartClient();
-                }
+                identity.NotifyAuthority();
+                identity.OnStartClient();
             }
             if (localPlayer != null)
                 OnSpawnMessageForLocalPlayer(localPlayer);
@@ -654,13 +651,17 @@ namespace Mirror
         {
             if (NetworkIdentity.spawned.TryGetValue(msg.netId, out NetworkIdentity identity) && identity != null)
             {
+                if (msg.isLocalPlayer)
+                    localPlayer = identity;
+                identity.hasAuthority = msg.isOwner;
+
                 identity.OnSetLocalVisibility(true);
+                identity.NotifyAuthority();
                 identity.OnStartClient();
                 if (msg.isLocalPlayer)
                 {
                     OnSpawnMessageForLocalPlayer(identity);
                 }
-                identity.hasAuthority = msg.isOwner;
             }
         }
 
