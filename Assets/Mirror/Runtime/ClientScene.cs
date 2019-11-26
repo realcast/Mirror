@@ -23,7 +23,7 @@ namespace Mirror
         /// <summary>
         /// NetworkIdentity of the localPlayer
         /// </summary>
-        public static NetworkIdentity localPlayer { get; internal set; }
+        public static NetworkIdentity localPlayer { get; private set; }
 
         /// <summary>
         /// Returns true when a client's connection has been set to ready.
@@ -67,6 +67,24 @@ namespace Mirror
             DestroyAllClientObjects();
         }
 
+        // this is called from message handler for Owner message
+        internal static void InternalAddPlayer(NetworkIdentity identity)
+        {
+            if (LogFilter.Debug) Debug.LogWarning("ClientScene.InternalAddPlayer");
+
+            // NOTE: It can be "normal" when changing scenes for the player to be destroyed and recreated.
+            // But, the player structures are not cleaned up, we'll just replace the old player
+            localPlayer = identity;
+            if (readyConnection != null)
+            {
+                readyConnection.identity = identity;
+            }
+            else
+            {
+                Debug.LogWarning("No ready connection found for setting player controller during InternalAddPlayer");
+            }
+        }
+
         /// <summary>
         /// This adds a player GameObject for this client.
         /// <para>This causes an AddPlayer message to be sent to the server, and NetworkManager.OnServerAddPlayer is called.</para>
@@ -105,7 +123,7 @@ namespace Mirror
 
             if (readyConnection.identity != null)
             {
-                Debug.LogError("ClientScene.AddPlayer: an identity was already added. Did you call AddPlayer twice?");
+                Debug.LogError("ClientScene.AddPlayer: a PlayerController was already added. Did you call AddPlayer twice?");
                 return false;
             }
 
@@ -449,10 +467,7 @@ namespace Mirror
         static void ApplySpawnPayload(NetworkIdentity identity, SpawnMessage msg)
         {
             identity.Reset();
-
-            if (msg.isLocalPlayer)
-                localPlayer = identity;
-
+            identity.pendingLocalPlayer = msg.isLocalPlayer;
             identity.assetId = msg.assetId;
 
             if (!identity.gameObject.activeSelf)
@@ -475,15 +490,14 @@ namespace Mirror
 
             identity.netId = msg.netId;
             NetworkIdentity.spawned[msg.netId] = identity;
-            identity.hasAuthority = msg.isOwner;
+            identity.pendingAuthority = msg.isOwner;
 
             // objects spawned as part of initial state are started on a second pass
             if (isSpawnFinished)
             {
-                identity.NotifyAuthority();
                 identity.OnStartClient();
-                if (msg.isLocalPlayer)
-                    OnSpawnMessageForLocalPlayer(identity);
+                CheckForLocalPlayer(identity);
+                identity.hasAuthority = identity.pendingAuthority;
             }
         }
 
@@ -495,6 +509,12 @@ namespace Mirror
                 return;
             }
             if (LogFilter.Debug) Debug.Log($"Client spawn handler instantiating netId={msg.netId} assetID={msg.assetId} sceneId={msg.sceneId} pos={msg.position}");
+
+            // is this supposed to be the local player?
+            if (msg.isLocalPlayer)
+            {
+                OnSpawnMessageForLocalPlayer(msg.netId);
+            }
 
             // was the object already spawned?
             NetworkIdentity identity = GetExistingObject(msg.netId);
@@ -581,11 +601,13 @@ namespace Mirror
             // use data from scene objects
             foreach (NetworkIdentity identity in NetworkIdentity.spawned.Values.OrderBy(uv => uv.netId))
             {
-                identity.NotifyAuthority();
-                identity.OnStartClient();
+                identity.hasAuthority = identity.pendingAuthority;
+                if (!identity.isClient)
+                {
+                    identity.OnStartClient();
+                    CheckForLocalPlayer(identity);
+                }
             }
-            if (localPlayer != null)
-                OnSpawnMessageForLocalPlayer(localPlayer);
             isSpawnFinished = true;
         }
 
@@ -630,38 +652,29 @@ namespace Mirror
             }
         }
 
-        internal static void OnLocalClientObjectDestroy(ObjectDestroyMessage msg)
+        internal static void OnHostClientObjectDestroy(ObjectDestroyMessage msg)
         {
             if (LogFilter.Debug) Debug.Log("ClientScene.OnLocalObjectObjDestroy netId:" + msg.netId);
 
             NetworkIdentity.spawned.Remove(msg.netId);
         }
 
-        internal static void OnLocalClientObjectHide(ObjectHideMessage msg)
+        internal static void OnHostClientObjectHide(ObjectHideMessage msg)
         {
             if (LogFilter.Debug) Debug.Log("ClientScene::OnLocalObjectObjHide netId:" + msg.netId);
 
             if (NetworkIdentity.spawned.TryGetValue(msg.netId, out NetworkIdentity localObject) && localObject != null)
             {
-                localObject.OnSetLocalVisibility(false);
+                localObject.OnSetHostVisibility(false);
             }
         }
 
-        internal static void OnLocalClientSpawn(SpawnMessage msg)
+        internal static void OnHostClientSpawn(SpawnMessage msg)
         {
-            if (NetworkIdentity.spawned.TryGetValue(msg.netId, out NetworkIdentity identity) && identity != null)
+            if (NetworkIdentity.spawned.TryGetValue(msg.netId, out NetworkIdentity localObject) && localObject != null)
             {
-                if (msg.isLocalPlayer)
-                    localPlayer = identity;
-                identity.hasAuthority = msg.isOwner;
-
-                identity.OnSetLocalVisibility(true);
-                identity.NotifyAuthority();
-                identity.OnStartClient();
-                if (msg.isLocalPlayer)
-                {
-                    OnSpawnMessageForLocalPlayer(identity);
-                }
+                localObject.OnSetHostVisibility(true);
+                localObject.hasAuthority = msg.isOwner;
             }
         }
 
@@ -704,20 +717,39 @@ namespace Mirror
         }
 
         // called for the one object in the spawn message which is the local player!
-        static void OnSpawnMessageForLocalPlayer(NetworkIdentity identity)
+        internal static void OnSpawnMessageForLocalPlayer(uint netId)
         {
-            if (LogFilter.Debug) Debug.Log("ClientScene.OnSpawnMessageForLocalPlayer - " + readyConnection + " netId: " + identity.netId);
+            if (LogFilter.Debug) Debug.Log("ClientScene.OnSpawnMessageForLocalPlayer - " + readyConnection + " netId: " + netId);
 
-            localPlayer = identity;
-            identity.connectionToServer = readyConnection;
-            identity.SetLocalPlayer();
-            if (readyConnection != null)
+            // is there already an owner that is a different object??
+            if (readyConnection.identity != null)
             {
-                readyConnection.identity = identity;
+                readyConnection.identity.SetNotLocalPlayer();
             }
-            else
+
+            if (NetworkIdentity.spawned.TryGetValue(netId, out NetworkIdentity localObject) && localObject != null)
             {
-                Debug.LogWarning("No ready connection found for spawning player controller");
+                // this object already exists
+                localObject.connectionToServer = readyConnection;
+                localObject.SetLocalPlayer();
+                InternalAddPlayer(localObject);
+            }
+        }
+
+        static void CheckForLocalPlayer(NetworkIdentity identity)
+        {
+            if (identity.pendingLocalPlayer)
+            {
+                // supposed to be local player, so make it the local player!
+
+                // Set isLocalPlayer to true on this NetworkIdentity and trigger OnStartLocalPlayer in all scripts on the same GO
+                identity.connectionToServer = readyConnection;
+                identity.SetLocalPlayer();
+
+                if (LogFilter.Debug) Debug.Log("ClientScene.OnOwnerMessage - player=" + identity.name);
+                InternalAddPlayer(identity);
+
+                identity.pendingLocalPlayer = false;
             }
         }
     }

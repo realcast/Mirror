@@ -48,6 +48,7 @@ namespace Mirror
     public sealed class NetworkIdentity : MonoBehaviour
     {
         // configuration
+        bool m_IsServer;
         NetworkBehaviour[] networkBehavioursCache;
 
         // member used to mark a identity for future reset
@@ -57,25 +58,55 @@ namespace Mirror
         /// <summary>
         /// Returns true if running as a client and this object was spawned by a server.
         /// </summary>
-        public bool isClient => NetworkClient.active && netId != 0;
+        public bool isClient { get; internal set; }
 
         /// <summary>
         /// Returns true if NetworkServer.active and server is not stopped.
         /// </summary>
-        public bool isServer => NetworkServer.active && netId != 0;
+        public bool isServer
+        {
+            get => m_IsServer && NetworkServer.active && netId != 0;
+            internal set => m_IsServer = value;
+        }
 
         /// <summary>
         /// This returns true if this object is the one that represents the player on the local machine.
         /// <para>This is set when the server has spawned an object for this particular client.</para>
         /// </summary>
-        public bool isLocalPlayer => ClientScene.localPlayer == this;
+        public bool isLocalPlayer { get; private set; }
+
+        internal bool pendingLocalPlayer { get; set; }
 
         /// <summary>
         /// This returns true if this object is the authoritative player object on the client.
         /// <para>This value is determined at runtime. For most objects, authority is held by the server.</para>
         /// <para>For objects that had their authority set by AssignClientAuthority on the server, this will be true on the client that owns the object. NOT on other clients.</para>
         /// </summary>
-        public bool hasAuthority { get; internal set; }
+        bool isOwner;
+
+        public bool hasAuthority
+        {
+            get => isOwner;
+            set
+            {
+                bool previous = isOwner;
+                isOwner = value;
+
+                if (previous && !isOwner)
+                {
+                    OnStopAuthority();
+                }
+                if (!previous && isOwner)
+                {
+                    OnStartAuthority();
+                }
+            }
+        }
+
+        // whether this object has been spawned with authority
+        // we need hasAuthority and pendingOwner because
+        // we need to wait until all of them spawn before updating hasAuthority
+        internal bool pendingAuthority { get; set; }
 
         /// <summary>
         /// The set of network connections (players) that can see this object.
@@ -102,18 +133,18 @@ namespace Mirror
         public bool serverOnly;
 
         /// <summary>
-        /// Obsolete: Use connectionToClient instead
+        /// Obsolete: Use <see cref="connectionToClient" /> instead
         /// </summary>
         [Obsolete("Use connectionToClient instead")]
         public NetworkConnectionToClient clientAuthorityOwner => connectionToClient;
 
         /// <summary>
-        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this NetworkIdentity. This is only valid for player and other owned objects on the client.
+        /// The NetworkConnection associated with this NetworkIdentity. This is only valid for player objects on a local client.
         /// </summary>
         public NetworkConnection connectionToServer { get; internal set; }
 
         /// <summary>
-        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this NetworkIdentity. This is valid for player and other owned objects in the server.
+        /// The NetworkConnection associated with this <see cref="NetworkIdentity">NetworkIdentity.</see> This is valid for player and other owned objects in the server.
         /// <para>Use it to return details such as the connection&apos;s identity, IP address and ready status.</para>
         /// </summary>
         public NetworkConnectionToClient connectionToClient { get; internal set; }
@@ -194,6 +225,19 @@ namespace Mirror
         /// Resets nextNetworkId = 1
         /// </summary>
         public static void ResetNextNetworkId() => nextNetworkId = 1;
+
+        // used when the player object for a connection changes
+        internal void SetNotLocalPlayer()
+        {
+            isLocalPlayer = false;
+
+            if (NetworkServer.active && NetworkServer.localClientActive)
+            {
+                // dont change authority for objects on the host
+                return;
+            }
+            hasAuthority = false;
+        }
 
         // this is used when a connection is destroyed, since the "observers" property is read-only
         internal void RemoveObserverInternal(NetworkConnection conn)
@@ -450,19 +494,19 @@ namespace Mirror
             sceneIds.Remove(sceneId);
             sceneIds.Remove(sceneId & 0x00000000FFFFFFFF);
 
-            if (isServer)
+            if (m_IsServer && NetworkServer.active)
             {
                 NetworkServer.Destroy(gameObject);
             }
         }
 
-        bool serverStarted;
-
-        internal void OnStartServer()
+        internal void OnStartServer(bool allowNonZeroNetId)
         {
-            if (serverStarted)
+            if (m_IsServer)
+            {
                 return;
-            serverStarted = true;
+            }
+            m_IsServer = true;
 
             observers = new Dictionary<int, NetworkConnection>();
 
@@ -473,8 +517,11 @@ namespace Mirror
             }
             else
             {
-                Debug.LogError("Object has non-zero netId " + netId + " for " + gameObject);
-                return;
+                if (!allowNonZeroNetId)
+                {
+                    Debug.LogError("Object has non-zero netId " + netId + " for " + gameObject);
+                    return;
+                }
             }
 
             if (LogFilter.Debug) Debug.Log("OnStartServer " + this + " NetId:" + netId + " SceneId:" + sceneId);
@@ -494,14 +541,22 @@ namespace Mirror
                     Debug.LogError("Exception in OnStartServer:" + e.Message + " " + e.StackTrace);
                 }
             }
-        }
 
-        bool clientStarted;
+            if (NetworkClient.active && NetworkServer.localClientActive)
+            {
+                // there will be no spawn message, so start the client here too
+                OnStartClient();
+            }
+
+            if (hasAuthority)
+            {
+                OnStartAuthority();
+            }
+        }
 
         internal void OnStartClient()
         {
-            if (clientStarted)
-                return;
+            isClient = true;
 
             if (LogFilter.Debug) Debug.Log("OnStartClient " + gameObject + " netId:" + netId);
             foreach (NetworkBehaviour comp in NetworkBehaviours)
@@ -515,17 +570,6 @@ namespace Mirror
                     Debug.LogError("Exception in OnStartClient:" + e.Message + " " + e.StackTrace);
                 }
             }
-            clientStarted = true;
-        }
-
-        bool hadAuthority;
-        internal void NotifyAuthority()
-        {
-            if (!hadAuthority && hasAuthority)
-                OnStartAuthority();
-            if (hadAuthority && !hasAuthority)
-                OnStopAuthority();
-            hadAuthority = hasAuthority;
         }
 
         void OnStartAuthority()
@@ -564,13 +608,16 @@ namespace Mirror
             }
         }
 
-        internal void OnSetLocalVisibility(bool vis)
+        internal void OnSetHostVisibility(bool visible)
         {
             foreach (NetworkBehaviour comp in NetworkBehaviours)
             {
                 try
                 {
-                    comp.OnSetLocalVisibility(vis);
+#pragma warning disable 618
+                    comp.OnSetLocalVisibility(visible); // remove later!
+#pragma warning restore 618
+                    comp.OnSetHostVisibility(visible);
                 }
                 catch (Exception e)
                 {
@@ -837,12 +884,8 @@ namespace Mirror
 
         internal void SetLocalPlayer()
         {
-            // There is an ordering issue here that originAuthority solves:
-            // OnStartAuthority should only be called if hasAuthority was false when this function began,
-            // or it will be called twice for this object, but that state is lost by the time OnStartAuthority
-            // is called below, so the original value is cached here to be checked below.
+            isLocalPlayer = true;
             hasAuthority = true;
-            NotifyAuthority();
 
             foreach (NetworkBehaviour comp in networkBehavioursCache)
             {
@@ -857,6 +900,7 @@ namespace Mirror
                 NetworkBehaviour comp = networkBehavioursCache[i];
                 comp.OnNetworkDestroy();
             }
+            m_IsServer = false;
         }
 
         internal void ClearObservers()
@@ -977,12 +1021,32 @@ namespace Mirror
                 }
             }
 
-            // special case for local client.
+            // special case for host mode: we use SetHostVisibility to hide
+            // NetworkIdentities that aren't in observer range from host.
+            // this is what games like Dota/Counter-Strike do too, where a host
+            // does NOT see all players by default. they are in memory, but
+            // hidden to the host player.
+            //
+            // this code is from UNET, it's a bit strange but it works:
+            // * it hides newly connected identities in host mode
+            //   => that part was the intended behaviour
+            // * it hides ALL NetworkIdentities in host mode when the host
+            //   connects but hasn't selected a character yet
+            //   => this only works because we have no .localConnection != null
+            //      check. at this stage, localConnection is null because
+            //      StartHost starts the server first, then calls this code,
+            //      then starts the client and sets .localConnection. so we can
+            //      NOT add a null check without breaking host visibility here.
+            // * it hides ALL NetworkIdentities in server-only mode because
+            //   observers never contain the 'null' .localConnection
+            //   => that was not intended, but let's keep it as it is so we
+            //      don't break anything in host mode. it's way easier than
+            //      iterating all identities in a special function in StartHost.
             if (initialize)
             {
                 if (!newObservers.Contains(NetworkServer.localConnection))
                 {
-                    OnSetLocalVisibility(false);
+                    OnSetHostVisibility(false);
                 }
             }
 
@@ -1092,10 +1156,11 @@ namespace Mirror
                 return;
 
             m_Reset = false;
-            serverStarted = false;
-            clientStarted = false;
+            m_IsServer = false;
+            isClient = false;
 
             netId = 0;
+            isLocalPlayer = false;
             connectionToServer = null;
             connectionToClient = null;
             networkBehavioursCache = null;
