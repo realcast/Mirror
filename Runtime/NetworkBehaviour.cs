@@ -65,9 +65,8 @@ namespace Mirror
         public bool isClientOnly => isClient && !isServer;
 
         /// <summary>
-        /// This returns true if this object is the authoritative player object on the client.
-        /// <para>This value is determined at runtime. For most objects, authority is held by the server.</para>
-        /// <para>For objects that had their authority set by AssignClientAuthority on the server, this will be true on the client that owns the object. NOT on other clients.</para>
+        /// This returns true if this object is the authoritative version of the object in the distributed network application.
+        /// <para>The <see cref="NetworkIdentity.hasAuthority">NetworkIdentity.hasAuthority</see> value on the NetworkIdentity determines how authority is determined. For most objects, authority is held by the server. For objects with <see cref="NetworkIdentity.hasAuthority">NetworkIdentity.hasAuthority</see> set, authority is held by the client of that player.</para>
         /// </summary>
         public bool hasAuthority => netIdentity.hasAuthority;
 
@@ -78,13 +77,12 @@ namespace Mirror
         public uint netId => netIdentity.netId;
 
         /// <summary>
-        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this <see cref="NetworkIdentity">NetworkIdentity</see>. This is only valid for player and other owned objects on the client.
+        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this <see cref="NetworkIdentity">NetworkIdentity.</see> This is only valid for player objects on the server.
         /// </summary>
         public NetworkConnection connectionToServer => netIdentity.connectionToServer;
 
         /// <summary>
-        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this <see cref="NetworkIdentity">NetworkIdentity</see>. This is valid for player and other owned objects on the server.
-        /// <para>Use it to return details such as the connection&apos;s identity, IP address and ready status.</para>
+        /// The <see cref="NetworkConnection">NetworkConnection</see> associated with this <see cref="NetworkIdentity">NetworkIdentity.</see> This is only valid for player objects on the server.
         /// </summary>
         public NetworkConnection connectionToClient => netIdentity.connectionToClient;
 
@@ -806,12 +804,15 @@ namespace Mirror
             return false;
         }
 
+        [Obsolete("Rename to OnSetHostVisibility instead.")]
+        public virtual void OnSetLocalVisibility(bool visible) {}
+
         /// <summary>
         /// Callback used by the visibility system for objects on a host.
         /// <para>Objects on a host (with a local client) cannot be disabled or destroyed when they are not visibile to the local client. So this function is called to allow custom code to hide these objects. A typical implementation will disable renderer components on the object. This is only called on local clients on a host.</para>
         /// </summary>
-        /// <param name="vis">New visibility state.</param>
-        public virtual void OnSetLocalVisibility(bool vis) {}
+        /// <param name="visible">New visibility state.</param>
+        public virtual void OnSetHostVisibility(bool visible) {}
 
         /// <summary>
         /// Callback used by the visibility system to determine if an observer (player) can see this object.

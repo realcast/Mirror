@@ -20,6 +20,9 @@ namespace Mirror
         static bool initialized;
         static int maxConnections;
 
+        /// <summary>
+        /// The connection to the host mode client (if any).
+        /// </summary>
         // original HLAPI has .localConnections list with only m_LocalConnection in it
         // (for backwards compatibility because they removed the real localConnections list a while ago)
         // => removed it for easier code. use .localConnection now!
@@ -205,9 +208,12 @@ namespace Mirror
             localClientActive = true;
             foreach (NetworkIdentity identity in NetworkIdentity.spawned.Values)
             {
-                if (LogFilter.Debug) Debug.Log("ActivateClientScene " + identity.netId + " " + identity);
+                if (!identity.isClient)
+                {
+                    if (LogFilter.Debug) Debug.Log("ActivateClientScene " + identity.netId + " " + identity);
 
-                identity.OnStartClient();
+                    identity.OnStartClient();
+                }
             }
         }
 
@@ -737,7 +743,7 @@ namespace Mirror
 
         /// <summary>
         /// <para>When an AddPlayer message handler has received a request from a player, the server calls this to associate the player object with the connection.</para>
-        /// <para>When a player is added for a connection, the client for that connection is made ready automatically. The player object is automatically spawned, so you do not need to call NetworkServer.Spawn for that object. This function is used for "adding" a player, not for "replacing" the player on a connection. If there is already a player for this connection, this will fail.</para>
+        /// <para>When a player is added for a connection, the client for that connection is made ready automatically. The player object is automatically spawned, so you do not need to call NetworkServer.Spawn for that object. This function is used for "adding" a player, not for "replacing" the player on a connection. If there is already a player on this playerControllerId for this connection, this will fail.</para>
         /// </summary>
         /// <param name="conn">Connection which is adding the player.</param>
         /// <param name="player">Player object spawned for the player.</param>
@@ -790,7 +796,7 @@ namespace Mirror
 
         /// <summary>
         /// <para>When an AddPlayer message handler has received a request from a player, the server calls this to associate the player object with the connection.</para>
-        /// <para>When a player is added for a connection, the client for that connection is made ready automatically. The player object is automatically spawned, so you do not need to call NetworkServer.Spawn for that object. This function is used for "adding" a player, not for "replacing" the player on a connection. If there is already a player for this connection, this will fail.</para>
+        /// <para>When a player is added for a connection, the client for that connection is made ready automatically. The player object is automatically spawned, so you do not need to call NetworkServer.Spawn for that object. This function is used for "adding" a player, not for "replacing" the player on a connection. If there is already a player on this playerControllerId for this connection, this will fail.</para>
         /// </summary>
         /// <param name="conn">Connection which is adding the player.</param>
         /// <param name="player">Player object spawned for the player.</param>
@@ -812,25 +818,55 @@ namespace Mirror
                 return false;
             }
 
-            // make sure we have an identity before we call SetClientReady
-            // because the observers will be rebuilt only if we have an identity
+            // make sure we have a controller before we call SetClientReady
+            // because the observers will be rebuilt only if we have a controller
             conn.identity = identity;
 
             // Set the connection on the NetworkIdentity on the server, NetworkIdentity.SetLocalPlayer is not called on the server (it is on clients)
             identity.connectionToClient = (NetworkConnectionToClient)conn;
 
-            // special case to ensure that isLocalPlayer is true before calling OnStartServer
-            if (NetworkClient.active)
-                ClientScene.localPlayer = identity;
-
             // set ready if not set yet
             SetClientReady(conn);
+
+            if (SetupLocalPlayerForConnection(conn, identity))
+            {
+                return true;
+            }
 
             if (LogFilter.Debug) Debug.Log("Adding new playerGameObject object netId: " + identity.netId + " asset ID " + identity.assetId);
 
             FinishPlayerForConnection(identity, player);
             identity.SetClientOwner(conn);
             return true;
+        }
+
+        static bool SetupLocalPlayerForConnection(NetworkConnection conn, NetworkIdentity identity)
+        {
+            if (LogFilter.Debug) Debug.Log("NetworkServer SetupLocalPlayerForConnection netID:" + identity.netId);
+
+            if (conn is ULocalConnectionToClient)
+            {
+                if (LogFilter.Debug) Debug.Log("NetworkServer AddPlayer handling ULocalConnectionToClient");
+
+                // Spawn this player for other players, instead of SpawnObject:
+                if (identity.netId == 0)
+                {
+                    // it is allowed to provide an already spawned object as the new player object.
+                    // so dont spawn it again.
+                    identity.OnStartServer(true);
+                }
+                identity.RebuildObservers(true);
+                SendSpawnMessage(identity, null);
+
+                // Set up local player instance on the client instance and update local object map
+                NetworkClient.AddLocalPlayer(identity);
+                identity.SetClientOwner(conn);
+
+                // Trigger OnStartLocalPlayer
+                identity.SetLocalPlayer();
+                return true;
+            }
+            return false;
         }
 
         static void FinishPlayerForConnection(NetworkIdentity identity, GameObject playerGameObject)
@@ -855,23 +891,33 @@ namespace Mirror
             //NOTE: there can be an existing player
             if (LogFilter.Debug) Debug.Log("NetworkServer ReplacePlayer");
 
+            // is there already an owner that is a different object??
+            if (conn.identity != null)
+            {
+                conn.identity.SetNotLocalPlayer();
+                conn.identity.connectionToClient = null;
+            }
+
             conn.identity = identity;
 
             // Set the connection on the NetworkIdentity on the server, NetworkIdentity.SetLocalPlayer is not called on the server (it is on clients)
-            identity.connectionToClient = (Mirror.NetworkConnectionToClient)conn;
-
-            // special case to ensure that isLocalPlayer is true before calling OnStartServer
-            if (NetworkClient.active)
-                ClientScene.localPlayer = identity;
+            identity.connectionToClient = (NetworkConnectionToClient)conn;
 
             //NOTE: DONT set connection ready.
 
-            // Add connection to observers AFTER the identity is set.
-            // By definition, there is nothing to observe if there is no identity.
+            // add connection to observers AFTER the playerController was set.
+            // by definition, there is nothing to observe if there is no player
+            // controller.
+            //
             // IMPORTANT: do this in AddPlayerForConnection & ReplacePlayerForConnection!
             SpawnObserversForConnection(conn);
 
             if (LogFilter.Debug) Debug.Log("NetworkServer ReplacePlayer setup local");
+
+            if (SetupLocalPlayerForConnection(conn, identity))
+            {
+                return true;
+            }
 
             if (LogFilter.Debug) Debug.Log("Replacing playerGameObject object netId: " + player.GetComponent<NetworkIdentity>().netId + " asset ID " + player.GetComponent<NetworkIdentity>().assetId);
 
@@ -982,8 +1028,9 @@ namespace Mirror
                 return;
             }
 
-            // Commands can be for player objects, OR other objects with client authority, so if this
-            // connection's identity has a different netId then only allow the command if connectionToClient matches.
+            // Commands can be for player objects, OR other objects with client-authority
+            // -> so if this connection's controller has a different netId then
+            //    only allow the command if clientAuthorityOwner
             if (identity.connectionToClient != conn)
             {
                 Debug.LogWarning("Command for object without authority [netId=" + msg.netId + "]");
@@ -1011,12 +1058,7 @@ namespace Mirror
             identity.Reset();
             identity.connectionToClient = (NetworkConnectionToClient)ownerConnection;
 
-            // special case to make sure hasAuthority is set
-            // on start server in host mode
-            if (ownerConnection is ULocalConnectionToClient)
-                identity.hasAuthority = true;
-            
-            identity.OnStartServer();
+            identity.OnStartServer(false);
 
             if (LogFilter.Debug) Debug.Log("SpawnObject instance ID " + identity.netId + " asset ID " + identity.assetId);
 
@@ -1057,10 +1099,34 @@ namespace Mirror
                 scale = identity.transform.localScale
             };
 
-            // use owner segment if 'conn' owns this identity, otherwise
-            // use observers segment
-            msg.payload = msg.isOwner ? ownerSegment : observersSegment;
-            conn.Send(msg);
+            // conn is != null when spawning it for a client
+            if (conn != null)
+            {
+                // use owner segment if 'conn' owns this identity, otherwise
+                // use observers segment
+                msg.payload = msg.isOwner ? ownerSegment : observersSegment;
+
+                conn.Send(msg);
+            }
+            // conn is == null when spawning it for the local player
+            else
+            {
+                // send ownerWriter to owner
+                // (spawn no matter what, even if no components were
+                //  serialized because the spawn message contains more data.
+                //  components might still be updated later on.)
+                msg.payload = ownerSegment;
+                msg.isOwner = true;
+                SendToClientOfPlayer(identity, msg);
+
+                // send observersWriter to everyone but owner
+                // (spawn no matter what, even if no components were
+                //  serialized because the spawn message contains more data.
+                //  components might still be updated later on.)
+                msg.payload = observersSegment;
+                msg.isOwner = false;
+                SendToReady(identity, msg, false);
+            }
 
             NetworkWriterPool.Recycle(ownerWriter);
             NetworkWriterPool.Recycle(observersWriter);
@@ -1121,9 +1187,9 @@ namespace Mirror
         }
 
         /// <summary>
-        /// Use <see cref="Spawn(GameObject, GameObject)"/> instead
+        /// Obsolete: Use <see cref="Spawn(GameObject, GameObject)"/> instead.
         /// </summary>
-        [Obsolete("Use Spawn(obj, player) instead")]
+        [EditorBrowsable(EditorBrowsableState.Never), Obsolete("Use Spawn(GameObject, GameObject) instead.")]
         public static bool SpawnWithClientAuthority(GameObject obj, GameObject player)
         {
             Spawn(obj, player);
@@ -1136,27 +1202,29 @@ namespace Mirror
         /// </summary>
         /// <param name="obj">The object to spawn.</param>
         /// <param name="player">The player object to set Client Authority to.</param>
-        /// <returns></returns>
         public static void Spawn(GameObject obj, GameObject player)
         {
             NetworkIdentity identity = player.GetComponent<NetworkIdentity>();
             if (identity == null)
             {
-                Debug.LogError("Spawn player object has no NetworkIdentity");
+                Debug.LogError("Player object has no NetworkIdentity");
+                return;
             }
 
             if (identity.connectionToClient == null)
             {
-                Debug.LogError("Spawn player object is not a player.");
+                Debug.LogError("Player object is not a player.");
+                return;
             }
 
             Spawn(obj, identity.connectionToClient);
         }
 
+
         /// <summary>
         /// Use <see cref="Spawn(GameObject, NetworkConnection)"/> instead
         /// </summary>
-        [Obsolete("Use Spawn(obj, connection) instead")]
+        [Obsolete("Use Spawn(obj,connection) instead")]
         public static bool SpawnWithClientAuthority(GameObject obj, NetworkConnection ownerConnection)
         {
             Spawn(obj, ownerConnection);
@@ -1166,7 +1234,7 @@ namespace Mirror
         /// <summary>
         /// Use <see cref="Spawn(GameObject, Guid, NetworkConnection)"/> instead
         /// </summary>
-        [Obsolete("Use Spawn(obj, assetId, connection) instead")]
+        [Obsolete("Use Spawn(obj,assetId, connection) instead")]
         public static bool SpawnWithClientAuthority(GameObject obj, Guid assetId, NetworkConnection ownerConnection)
         {
             Spawn(obj, assetId, ownerConnection);
