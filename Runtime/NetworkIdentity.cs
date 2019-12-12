@@ -48,7 +48,6 @@ namespace Mirror
     public sealed class NetworkIdentity : MonoBehaviour
     {
         // configuration
-        bool m_IsServer;
         NetworkBehaviour[] networkBehavioursCache;
 
         // member used to mark a identity for future reset
@@ -58,24 +57,18 @@ namespace Mirror
         /// <summary>
         /// Returns true if running as a client and this object was spawned by a server.
         /// </summary>
-        public bool isClient { get; internal set; }
+        public bool isClient => NetworkClient.active && netId != 0 && !serverOnly;
 
         /// <summary>
         /// Returns true if NetworkServer.active and server is not stopped.
         /// </summary>
-        public bool isServer
-        {
-            get => m_IsServer && NetworkServer.active && netId != 0;
-            internal set => m_IsServer = value;
-        }
+        public bool isServer =>  NetworkServer.active && netId != 0;
 
         /// <summary>
         /// This returns true if this object is the one that represents the player on the local machine.
         /// <para>This is set when the server has spawned an object for this particular client.</para>
         /// </summary>
-        public bool isLocalPlayer { get; private set; }
-
-        internal bool pendingLocalPlayer { get; set; }
+        public bool isLocalPlayer => ClientScene.localPlayer == this;
 
         /// <summary>
         /// This returns true if this object is the authoritative player object on the client.
@@ -84,29 +77,7 @@ namespace Mirror
         /// </summary>
         bool isOwner;
 
-        public bool hasAuthority
-        {
-            get => isOwner;
-            set
-            {
-                bool previous = isOwner;
-                isOwner = value;
-
-                if (previous && !isOwner)
-                {
-                    OnStopAuthority();
-                }
-                if (!previous && isOwner)
-                {
-                    OnStartAuthority();
-                }
-            }
-        }
-
-        // whether this object has been spawned with authority
-        // we need hasAuthority and pendingOwner because
-        // we need to wait until all of them spawn before updating hasAuthority
-        internal bool pendingAuthority { get; set; }
+        public bool hasAuthority { get; internal set; }
 
         /// <summary>
         /// The set of network connections (players) that can see this object.
@@ -190,7 +161,7 @@ namespace Mirror
                 {
                     m_AssetId = newAssetIdString;
                 }
-                else Debug.LogWarning("SetDynamicAssetId object already has an assetId <" + m_AssetId + ">");
+                else Debug.LogWarning($"SetDynamicAssetId object {this.name} already has an assetId {m_AssetId}, new asset id {newAssetIdString}");
             }
         }
 
@@ -225,19 +196,6 @@ namespace Mirror
         /// Resets nextNetworkId = 1
         /// </summary>
         public static void ResetNextNetworkId() => nextNetworkId = 1;
-
-        // used when the player object for a connection changes
-        internal void SetNotLocalPlayer()
-        {
-            isLocalPlayer = false;
-
-            if (NetworkServer.active && NetworkServer.localClientActive)
-            {
-                // dont change authority for objects on the host
-                return;
-            }
-            hasAuthority = false;
-        }
 
         // this is used when a connection is destroyed, since the "observers" property is read-only
         internal void RemoveObserverInternal(NetworkConnection conn)
@@ -494,35 +452,25 @@ namespace Mirror
             sceneIds.Remove(sceneId);
             sceneIds.Remove(sceneId & 0x00000000FFFFFFFF);
 
-            if (m_IsServer && NetworkServer.active)
+            if (isServer)
             {
                 NetworkServer.Destroy(gameObject);
             }
         }
 
-        internal void OnStartServer(bool allowNonZeroNetId)
+        internal void OnStartServer()
         {
-            if (m_IsServer)
+            // If the instance/net ID is invalid here then this is an object instantiated from a prefab and the server should assign a valid ID
+            if (netId != 0)
             {
+                // This object has already been spawned, this method might be called again
+                // if we try to respawn all objects.  This can happen when we add a scene
+                // in that case there is nothing else to do.
                 return;
             }
-            m_IsServer = true;
 
+            netId = GetNextNetworkId();
             observers = new Dictionary<int, NetworkConnection>();
-
-            // If the instance/net ID is invalid here then this is an object instantiated from a prefab and the server should assign a valid ID
-            if (netId == 0)
-            {
-                netId = GetNextNetworkId();
-            }
-            else
-            {
-                if (!allowNonZeroNetId)
-                {
-                    Debug.LogError("Object has non-zero netId " + netId + " for " + gameObject);
-                    return;
-                }
-            }
 
             if (LogFilter.Debug) Debug.Log("OnStartServer " + this + " NetId:" + netId + " SceneId:" + sceneId);
 
@@ -541,22 +489,14 @@ namespace Mirror
                     Debug.LogError("Exception in OnStartServer:" + e.Message + " " + e.StackTrace);
                 }
             }
-
-            if (NetworkClient.active && NetworkServer.localClientActive)
-            {
-                // there will be no spawn message, so start the client here too
-                OnStartClient();
-            }
-
-            if (hasAuthority)
-            {
-                OnStartAuthority();
-            }
         }
 
+        bool clientStarted;
         internal void OnStartClient()
         {
-            isClient = true;
+            if (clientStarted)
+                return;
+            clientStarted = true;
 
             if (LogFilter.Debug) Debug.Log("OnStartClient " + gameObject + " netId:" + netId);
             foreach (NetworkBehaviour comp in NetworkBehaviours)
@@ -570,6 +510,16 @@ namespace Mirror
                     Debug.LogError("Exception in OnStartClient:" + e.Message + " " + e.StackTrace);
                 }
             }
+        }
+
+        bool hadAuthority;
+        internal void NotifyAuthority()
+        {
+            if (!hadAuthority && hasAuthority)
+                OnStartAuthority();
+            if (hadAuthority && !hasAuthority)
+                OnStopAuthority();
+            hadAuthority = hasAuthority;
         }
 
         void OnStartAuthority()
@@ -614,9 +564,6 @@ namespace Mirror
             {
                 try
                 {
-#pragma warning disable 618
-                    comp.OnSetLocalVisibility(visible); // remove later!
-#pragma warning restore 618
                     comp.OnSetHostVisibility(visible);
                 }
                 catch (Exception e)
@@ -643,21 +590,17 @@ namespace Mirror
             return true;
         }
 
-        // vis2k: readstring bug prevention: https://issuetracker.unity3d.com/issues/unet-networkwriter-dot-write-causing-readstring-slash-readbytes-out-of-range-errors-in-clients
-        // -> OnSerialize writes length,componentData,length,componentData,...
-        // -> OnDeserialize carefully extracts each data, then deserializes each component with separate readers
-        //    -> it will be impossible to read too many or too few bytes in OnDeserialize
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // random number that is unlikely to appear in a regular data stream
+        const byte Barrier = 171;
+
+        // paul: readstring bug prevention: https://issuetracker.unity3d.com/issues/unet-networkwriter-dot-write-causing-readstring-slash-readbytes-out-of-range-errors-in-clients
+        // -> OnSerialize writes componentData, barrier, componentData, barrier,componentData,...
+        // -> OnDeserialize carefully extracts each data, then deserializes the barrier and check it
+        //    -> If we read too many or too few bytes,  the barrier is very unlikely to match
         //    -> we can properly track down errors
         bool OnSerializeSafely(NetworkBehaviour comp, NetworkWriter writer, bool initialState)
         {
-            // write placeholder length bytes
-            // (jumping back later is WAY faster than allocating a temporary
-            //  writer for the payload, then writing payload.size, payload)
-            int headerPosition = writer.Position;
-            writer.WriteInt32(0);
-            int contentPosition = writer.Position;
-
-            // write payload
             bool result = false;
             try
             {
@@ -668,15 +611,10 @@ namespace Mirror
                 // show a detailed error and let the user know what went wrong
                 Debug.LogError("OnSerialize failed for: object=" + name + " component=" + comp.GetType() + " sceneId=" + m_SceneId.ToString("X") + "\n\n" + e);
             }
-            int endPosition = writer.Position;
+            if (LogFilter.Debug) { Debug.Log("OnSerializeSafely written for object=" + comp.name + " component=" + comp.GetType() + " sceneId=" + m_SceneId); }
 
-            // fill in length now
-            writer.Position = headerPosition;
-            writer.WriteInt32(endPosition - contentPosition);
-            writer.Position = endPosition;
-
-            if (LogFilter.Debug) Debug.Log("OnSerializeSafely written for object=" + comp.name + " component=" + comp.GetType() + " sceneId=" + m_SceneId.ToString("X") + "header@" + headerPosition + " content@" + contentPosition + " end@" + endPosition + " contentSize=" + (endPosition - contentPosition));
-
+            // serialize a barrier to be checked by the deserializer
+            writer.WriteByte(Barrier);
             return result;
         }
 
@@ -786,34 +724,25 @@ namespace Mirror
 
         void OnDeserializeSafely(NetworkBehaviour comp, NetworkReader reader, bool initialState)
         {
-            // read header as 4 bytes and calculate this chunk's start+end
-            int contentSize = reader.ReadInt32();
-            int chunkStart = reader.Position;
-            int chunkEnd = reader.Position + contentSize;
-
-            // call OnDeserialize and wrap it in a try-catch block so there's no
-            // way to mess up another component's deserialization
+        
+            // call OnDeserialize with a temporary reader, so that the
+            // original one can't be messed with. we also wrap it in a
+            // try-catch block so there's no way to mess up another
+            // component's deserialization
             try
             {
-                if (LogFilter.Debug) Debug.Log("OnDeserializeSafely: " + comp.name + " component=" + comp.GetType() + " sceneId=" + m_SceneId.ToString("X") + " length=" + contentSize);
                 comp.OnDeserialize(reader, initialState);
+
+                byte barrierData = reader.ReadByte();
+                if (barrierData != Barrier)
+                {
+                    Debug.LogError("OnDeserialize failed for: object=" + name + " component=" + comp.GetType() + " sceneId=" + m_SceneId  + ". Possible Reasons:\n  * Do " + comp.GetType() + "'s OnSerialize and OnDeserialize calls write the same amount of data? \n  * Was there an exception in " + comp.GetType() + "'s OnSerialize/OnDeserialize code?\n  * Are the server and client the exact same project?\n  * Maybe this OnDeserialize call was meant for another GameObject? The sceneIds can easily get out of sync if the Hierarchy was modified only in the client OR the server. Try rebuilding both.\n\n" );
+                }
             }
             catch (Exception e)
             {
                 // show a detailed error and let the user know what went wrong
-                Debug.LogError("OnDeserialize failed for: object=" + name + " component=" + comp.GetType() + " sceneId=" + m_SceneId.ToString("X") + " length=" + contentSize + ". Possible Reasons:\n  * Do " + comp.GetType() + "'s OnSerialize and OnDeserialize calls write the same amount of data(" + contentSize + " bytes)? \n  * Was there an exception in " + comp.GetType() + "'s OnSerialize/OnDeserialize code?\n  * Are the server and client the exact same project?\n  * Maybe this OnDeserialize call was meant for another GameObject? The sceneIds can easily get out of sync if the Hierarchy was modified only in the client OR the server. Try rebuilding both.\n\n" + e);
-            }
-
-            // now the reader should be EXACTLY at 'before + size'.
-            // otherwise the component read too much / too less data.
-            if (reader.Position != chunkEnd)
-            {
-                // warn the user
-                int bytesRead = reader.Position - chunkStart;
-                Debug.LogWarning("OnDeserialize was expected to read " + contentSize + " instead of " + bytesRead + " bytes for object:" + name + " component=" + comp.GetType() + " sceneId=" + m_SceneId.ToString("X") + ". Make sure that OnSerialize and OnDeserialize write/read the same amount of data in all cases.");
-
-                // fix the position, so the following components don't all fail
-                reader.Position = chunkEnd;
+                Debug.LogError("OnDeserialize failed for: object=" + name + " component=" + comp.GetType() + " sceneId=" + m_SceneId + ". Possible Reasons:\n  * Do " + comp.GetType() + "'s OnSerialize and OnDeserialize calls write the same amount of data? \n  * Was there an exception in " + comp.GetType() + "'s OnSerialize/OnDeserialize code?\n  * Are the server and client the exact same project?\n  * Maybe this OnDeserialize call was meant for another GameObject? The sceneIds can easily get out of sync if the Hierarchy was modified only in the client OR the server. Try rebuilding both.\n\n" + e.ToString());
             }
         }
 
@@ -882,10 +811,12 @@ namespace Mirror
             OnDeserializeAllSafely(reader, initialState);
         }
 
-        internal void SetLocalPlayer()
+        private static NetworkIdentity previousLocalPlayer = null;
+        internal void OnStartLocalPlayer()
         {
-            isLocalPlayer = true;
-            hasAuthority = true;
+            if (previousLocalPlayer == this)
+                return;
+            previousLocalPlayer = this;
 
             foreach (NetworkBehaviour comp in networkBehavioursCache)
             {
@@ -900,7 +831,6 @@ namespace Mirror
                 NetworkBehaviour comp = networkBehavioursCache[i];
                 comp.OnNetworkDestroy();
             }
-            m_IsServer = false;
         }
 
         internal void ClearObservers()
@@ -1062,18 +992,6 @@ namespace Mirror
         }
 
         /// <summary>
-        /// Obsolete: Use <see cref="RemoveClientAuthority()"/> instead
-        /// </summary>
-        /// <param name="conn">The connection of the client to remove authority for.</param>
-        /// <returns>True if authority is removed.</returns>
-        [EditorBrowsable(EditorBrowsableState.Never), Obsolete("NetworkConnection parameter is no longer needed and nothing is returned")]
-        public bool RemoveClientAuthority(NetworkConnection conn)
-        {
-            RemoveClientAuthority();
-            return true;
-        }
-
-        /// <summary>
         /// Removes ownership for an object.
         /// <para>This applies to objects that had authority set by AssignClientAuthority, or <see cref="NetworkServer.Spawn">NetworkServer.Spawn</see> with a NetworkConnection parameter included.</para>
         /// <para>Authority cannot be removed for player objects.</para>
@@ -1155,12 +1073,10 @@ namespace Mirror
             if (!m_Reset)
                 return;
 
+            clientStarted = false;
             m_Reset = false;
-            m_IsServer = false;
-            isClient = false;
 
             netId = 0;
-            isLocalPlayer = false;
             connectionToServer = null;
             connectionToClient = null;
             networkBehavioursCache = null;

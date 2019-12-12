@@ -64,6 +64,18 @@ namespace Mirror
         /// <param name="address">The IP address or FQDN of the server we are trying to connect to</param>
         public abstract void ClientConnect(string address);
 
+
+        /// <summary>
+        /// Establish a connecion to a server
+        /// </summary>
+        /// <param name="uri">The address of the server we are trying to connect to</param>
+        public virtual void ClientConnect(Uri uri)
+        {
+            // By default, to keep backwards compatibility, just connect to the host
+            // in the uri
+            ClientConnect(uri.Host);
+        }
+
         /// <summary>
         /// Send data to the server
         /// </summary>
@@ -134,16 +146,6 @@ namespace Mirror
         /// <param name="connectionId">the id of the client to disconnect</param>
         /// <returns>true if the client was kicked</returns>
         public abstract bool ServerDisconnect(int connectionId);
-
-        /// <summary>
-        /// Deprecated: Use ServerGetClientAddress(int connectionId) instead
-        /// </summary>
-        [EditorBrowsable(EditorBrowsableState.Never), Obsolete("Use ServerGetClientAddress(int connectionId) instead")]
-        public virtual bool GetConnectionInfo(int connectionId, out string address)
-        {
-            address = ServerGetClientAddress(connectionId);
-            return true;
-        }
 
         /// <summary>
         /// Get the client address

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Mono.CecilX;
 
 namespace Mirror.Weaver
@@ -112,7 +113,6 @@ namespace Mirror.Weaver
             }
             return true;
         }
-
 
         // Given a method of a generic class such as ArraySegment<T>.get_Count,   
         // and a generic instance such as ArraySegment<int>

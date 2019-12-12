@@ -18,6 +18,8 @@ namespace Mirror
     [EditorBrowsable(EditorBrowsableState.Never), Obsolete("LLAPI is obsolete and will be removed from future versions of Unity")]
     public class LLAPITransport : Transport
     {
+        public const string Scheme = "unet";
+
         public ushort port = 7777;
 
         [Tooltip("Enable for WebGL games. Can only do either WebSockets or regular Sockets, not both (yet).")]
@@ -110,7 +112,9 @@ namespace Mirror
             return clientConnectionId != -1;
         }
 
-        public override void ClientConnect(string address)
+        
+
+        void ClientConnect(string address, int port)
         {
             // LLAPI can't handle 'localhost'
             if (address.ToLower() == "localhost") address = "127.0.0.1";
@@ -123,12 +127,27 @@ namespace Mirror
             clientId = NetworkTransport.AddHost(hostTopology, 0);
 
             clientConnectionId = NetworkTransport.Connect(clientId, address, port, 0, out error);
-            NetworkError networkError = (NetworkError)error;
-            if (networkError != NetworkError.Ok)
+            var networkError = (UnityEngine.Networking.NetworkError) error;
+            if (networkError != UnityEngine.Networking.NetworkError.Ok)
             {
                 Debug.LogWarning("NetworkTransport.Connect failed: clientId=" + clientId + " address= " + address + " port=" + port + " error=" + error);
                 clientConnectionId = -1;
             }
+        }
+
+        public override void ClientConnect(string address)
+        {
+            ClientConnect(address, port);
+        }
+
+        public override void ClientConnect(Uri uri)
+        {
+            if (uri.Scheme != Scheme)
+                throw new ArgumentException($"Invalid url {uri}, use {Scheme}://host:port instead", nameof(uri));
+
+            int serverPort = uri.IsDefaultPort ? port : uri.Port;
+
+            ClientConnect(uri.Host, serverPort);
         }
 
         public override bool ClientSend(int channelId, ArraySegment<byte> segment)
@@ -158,8 +177,8 @@ namespace Mirror
             //
             // DO NOT return after error != 0. otherwise Disconnect won't be
             // registered.
-            NetworkError networkError = (NetworkError)error;
-            if (networkError != NetworkError.Ok)
+            var networkError = (UnityEngine.Networking.NetworkError)error;
+            if (networkError != UnityEngine.Networking.NetworkError.Ok)
             {
                 string message = "NetworkTransport.Receive failed: hostid=" + clientId + " connId=" + connectionId + " channelId=" + channel + " error=" + networkError;
                 OnClientError.Invoke(new Exception(message));
@@ -258,8 +277,8 @@ namespace Mirror
             //
             // DO NOT return after error != 0. otherwise Disconnect won't be
             // registered.
-            NetworkError networkError = (NetworkError)error;
-            if (networkError != NetworkError.Ok)
+            var networkError = (UnityEngine.Networking.NetworkError)error;
+            if (networkError != UnityEngine.Networking.NetworkError.Ok)
             {
                 string message = "NetworkTransport.Receive failed: hostid=" + serverHostId + " connId=" + connectionId + " channelId=" + channel + " error=" + networkError;
 

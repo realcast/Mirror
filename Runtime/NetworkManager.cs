@@ -150,37 +150,9 @@ namespace Mirror
         public bool clientLoadedScene;
 
         /// <summary>
-        /// Obsolete: Use <see cref="NetworkClient.isConnected"/> instead
-        /// </summary>
-        /// <returns>Returns True if NetworkClient.isConnected</returns>
-        [EditorBrowsable(EditorBrowsableState.Never), Obsolete("Use NetworkClient.isConnected instead")]
-        public bool IsClientConnected()
-        {
-            return NetworkClient.isConnected;
-        }
-
-        /// <summary>
-        /// Obsolete: Use <see cref="isHeadless"/> instead.
-        /// <para>This is a static property now. This method will be removed by summer 2019.</para>
-        /// </summary>
-        /// <returns></returns>
-        [EditorBrowsable(EditorBrowsableState.Never), Obsolete("Use isHeadless instead of IsHeadless()")]
-        public static bool IsHeadless()
-        {
-            return isHeadless;
-        }
-
-        /// <summary>
         /// headless mode detection
         /// </summary>
         public static bool isHeadless => SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null;
-
-        /// <summary>
-        /// Obsolete: Use <see cref="NetworkClient"/> directly
-        /// <para>For example, use <c>NetworkClient.Send(message)</c> instead of <c>NetworkManager.client.Send(message)</c></para>
-        /// </summary>
-        [EditorBrowsable(EditorBrowsableState.Never), Obsolete("Use NetworkClient directly, it will be made static soon. For example, use NetworkClient.Send(message) instead of NetworkManager.client.Send(message)")]
-        public NetworkClient client => NetworkClient.singleton;
 
         #region Unity Callbacks
 
@@ -354,12 +326,44 @@ namespace Mirror
         }
 
         /// <summary>
+        /// This starts a network client. It uses the networkAddress and networkPort properties as the address to connect to.
+        /// <para>This makes the newly created client connect to the server immediately.</para>
+        /// </summary>
+        /// <param name="uri">location of the server to connect to</param>
+        public void StartClient(Uri uri)
+        {
+            InitializeSingleton();
+
+            if (authenticator != null)
+            {
+                authenticator.OnStartClient();
+                authenticator.OnClientAuthenticated.AddListener(OnClientAuthenticated);
+            }
+
+            if (runInBackground)
+                Application.runInBackground = true;
+
+            isNetworkActive = true;
+
+            RegisterClientMessages();
+
+            if (LogFilter.Debug) Debug.Log("NetworkManager StartClient address:" + uri);
+            this.networkAddress = uri.Host;
+
+            NetworkClient.Connect(uri);
+
+            OnStartClient();
+        }
+
+
+        /// <summary>
         /// This starts a network "host" - a server and client in the same application.
         /// <para>The client returned from StartHost() is a special "local" client that communicates to the in-process server using a message queue instead of the real network. But in almost all other cases, it can be treated as a normal client.</para>
         /// </summary>
         public virtual void StartHost()
         {
             OnStartHost();
+            NetworkClient.SetupLocalConnection();
             if (StartServer())
             {
                 ConnectLocalClient();
@@ -530,8 +534,8 @@ namespace Mirror
 
             networkAddress = "localhost";
             NetworkServer.ActivateLocalClientScene();
-            NetworkClient.ConnectLocalServer();
             RegisterClientMessages();
+            NetworkClient.ConnectLocalServer();
         }
 
         void RegisterClientMessages()
@@ -610,18 +614,6 @@ namespace Mirror
         /// </summary>
         /// <param name="newSceneName"></param>
         public virtual void ServerChangeScene(string newSceneName)
-        {
-            ServerChangeScene(newSceneName, LoadSceneMode.Single, LocalPhysicsMode.None);
-        }
-
-        /// <summary>
-        /// This causes the server to switch scenes and sets the networkSceneName.
-        /// <para>Clients that connect to this server will automatically switch to this scene. This is called autmatically if onlineScene or offlineScene are set, but it can be called from user code to switch scenes again while the game is in progress. This automatically sets clients to be not-ready. The clients must call NetworkClient.Ready() again to participate in the new scene.</para>
-        /// </summary>
-        /// <param name="newSceneName"></param>
-        /// <param name="sceneMode"></param>
-        /// <param name="physicsMode"></param>
-        public virtual void ServerChangeScene(string newSceneName, LoadSceneMode sceneMode, LocalPhysicsMode physicsMode)
         {
             if (string.IsNullOrEmpty(newSceneName))
             {
@@ -769,7 +761,7 @@ namespace Mirror
 
         #region Start Positions
 
-        static int startPositionIndex;
+        public static int startPositionIndex;
 
         /// <summary>
         /// List of transforms populted by NetworkStartPosition components found in the scene.
@@ -1142,16 +1134,6 @@ namespace Mirror
         public virtual void OnClientNotReady(NetworkConnection conn) { }
 
         /// <summary>
-        /// Obsolete: Use <see cref="OnClientChangeScene(string, SceneOperation)"/> instead.).
-        /// </summary>
-        /// <param name="newSceneName">Name of the scene that's about to be loaded</param>
-        [EditorBrowsable(EditorBrowsableState.Never), Obsolete("Override OnClientChangeScene(string newSceneName, SceneOperation sceneOperation) instead")]
-        public virtual void OnClientChangeScene(string newSceneName)
-        {
-            OnClientChangeScene(newSceneName, SceneOperation.Normal);
-        }
-
-        /// <summary>
         /// Called from ClientChangeScene immediately before SceneManager.LoadSceneAsync is executed
         /// <para>This allows client to do work / cleanup / prep before the scene changes.</para>
         /// </summary>
@@ -1197,21 +1179,10 @@ namespace Mirror
         public virtual void OnStartServer() { }
 
         /// <summary>
-        /// Obsolete: Use <see cref="OnStartClient()"/> instead of OnStartClient(NetworkClient client).
-        /// <para>All NetworkClient functions are static now, so you can use NetworkClient.Send(message) instead of client.Send(message) directly now.</para>
-        /// </summary>
-        /// <param name="client">The NetworkClient object that was started.</param>
-        [EditorBrowsable(EditorBrowsableState.Never), Obsolete("Use OnStartClient() instead of OnStartClient(NetworkClient client). All NetworkClient functions are static now, so you can use NetworkClient.Send(message) instead of client.Send(message) directly now.")]
-        public virtual void OnStartClient(NetworkClient client) { }
-
-        /// <summary>
         /// This is invoked when the client is started.
         /// </summary>
         public virtual void OnStartClient()
         {
-#pragma warning disable CS0618 // Type or member is obsolete
-            OnStartClient(NetworkClient.singleton);
-#pragma warning restore CS0618 // Type or member is obsolete
         }
 
         /// <summary>
