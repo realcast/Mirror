@@ -2,9 +2,9 @@
 
 [![Download](https://img.shields.io/badge/asset_store-brightgreen.svg)](https://www.assetstore.unity3d.com/#!/content/129321)
 [![Documentation](https://img.shields.io/badge/documentation-brightgreen.svg)](https://mirror-networking.com/docs)
+[![Video Tutorial](https://img.shields.io/badge/video_tutorial-brightgreen.svg)](https://www.youtube.com/playlist?list=PLkx8oFug638oBYF5EOwsSS-gOVBXj1dkP)
 [![Forum](https://img.shields.io/badge/forum-brightgreen.svg)](https://forum.unity.com/threads/mirror-networking-for-unity-aka-hlapi-community-edition.425437/)
 [![donate](https://img.shields.io/badge/donations-brightgreen.svg)](https://www.patreon.com/MirrorNetworking)
-[![Build status](https://img.shields.io/appveyor/ci/vis2k73562/hlapi-community-edition/Mirror.svg)](https://ci.appveyor.com/project/vis2k73562/hlapi-community-edition/branch/mirror)
 [![Discord](https://img.shields.io/discord/343440455738064897.svg)](https://discordapp.com/invite/N9QVxbM)
 [![release](https://img.shields.io/github/release/vis2k/Mirror.svg)](https://github.com/vis2k/Mirror/releases/latest)
 
@@ -22,6 +22,15 @@ With Mirror, the **Server & Client are ONE** project _(hence the name)_. Instead
 What previously required **10.000** lines of code, now takes **1.000** lines of code. Therein lies the **magic of Mirror**.
 
 _Note: Mirror is based on Unity's abandoned UNET Networking system. We fixed it up and pushed it to MMO Scale._
+
+## Changelog
+This is a work in progress branch.  The differences with mirror branch are:
+
+ * It is no longer built as dlls,  you import the source directly in your unity project
+ * The TCP transport uses asynchronous instead of threads.  From our testing,  this scales a lot better.
+ * It only works in Unity 2018.2 and later,  support for 2017.4 has been dropped
+ * Only TCP transport is provided as of this writing,  LLAPI and websockets are WIP
+ * Proper error handling.  Just override OnClientError and OnServerError in your network manager
 
 ## Documentation
 Check out our [Documentation](https://mirror-networking.com/docs/).
